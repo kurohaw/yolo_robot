@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
@@ -11,62 +12,70 @@ import numpy as np
 from ultralytics import YOLO
 
 
-MODEL_PATH = Path("runs/classify/target_item_classes/weights/best.pt")
-PROPOSAL_MODEL_PATH = Path("yolov8n.pt")
-WINDOW_NAME = "YOLO 9 Item Detection"
+# 模型与窗口配置：分类模型是本项目训练好的 9 类模型，proposal 模型用于可选的通用目标预检测
+MODEL_PATH = Path("runs/classify/target_item_classes/weights/best.pt")  # 项目训练好的分类模型权重路径
+PROPOSAL_MODEL_PATH = Path("yolov8n.pt")  # 通用 YOLO 检测模型路径，仅在不强制卡片检测时使用
+WINDOW_NAME = "YOLO 9 Item Detection"  # OpenCV 显示窗口标题
 
-CAMERA_INDEX = 0
-DISPLAY_WIDTH = 960
+# 摄像头与显示配置
+CAMERA_INDEX = 0  # 摄像头编号；如果打不开摄像头，可改为 1、2 等其他设备号
+DISPLAY_WIDTH = 960  # 显示画面的最大宽度；原图更宽时会按比例缩小
 
-MAX_CANDIDATES = 14
-MAX_CARD_CANDIDATES = 6
-MAX_DETECTIONS = 1
-PROPOSAL_CONF_THRESHOLD = 0.28
-PROPOSAL_IOU_THRESHOLD = 0.45
-CONF_THRESHOLD = 0.78
-MARGIN_THRESHOLD = 0.12
-NMS_IOU_THRESHOLD = 0.35
-DETECTION_INTERVAL = 2
-TRACK_MIN_HITS = 3
-TRACK_MAX_MISSED = 8
-BOX_SMOOTHING = 0.90
-CONFIDENCE_SMOOTHING = 0.82
-MOTION_THRESHOLD = 18
-NEW_TRACK_MIN_MOTION = 0.006
-ENABLE_CONTOUR_FALLBACK = True
-FALLBACK_CONF_THRESHOLD = 0.90
-FALLBACK_MIN_MOTION = 0.015
-FACE_OVERLAP_THRESHOLD = 0.12
-CARD_CONF_THRESHOLD = 0.78
-TRACK_VISIBLE_CONFIDENCE_RATIO = 0.90
-SINGLE_TARGET_MODE = True
-LABEL_SWITCH_HITS = 3
-PRIMARY_JUMP_IOU = 0.06
-PRIMARY_JUMP_CENTER_RATIO = 0.55
-PRIMARY_CONF_DECAY = 0.97
-TERMINAL_REPEAT_INTERVAL = 5.0
-REQUIRE_CARD_FOR_DETECTION = True
-CARD_MISSING_CLEAR_FRAMES = 2
-DEBUG_PRINT_INTERVAL = 1.0
-CARD_MIN_BRIGHT_RATIO = 0.46
-CARD_MIN_EDGE_DENSITY = 0.002
-CARD_MAX_EDGE_DENSITY = 0.18
-CARD_MIN_DARK_RATIO = 0.001
-CARD_MAX_DARK_RATIO = 0.55
-CARD_MIN_RECTANGULARITY = 0.62
-ENABLE_ORIENTATION_TTA = True
-ORIENTATION_TTA_MARGIN_WEIGHT = 0.25
-CARD_MIN_BORDER_SIDES = 3
-CARD_BORDER_STRIP_RATIO = 0.06
-CARD_BORDER_DARK_THRESHOLD = 0.025
-CARD_BORDER_EDGE_THRESHOLD = 0.020
-CARD_MIN_BORDER_SCORE = 1.20
-EDGE_CARD_MIN_AREA_RATIO = 0.05
-EDGE_CARD_MAX_AREA_RATIO = 0.75
-EDGE_CARD_MIN_SIDE = 120
-EDGE_CARD_MAX_ASPECT = 1.45
-EDGE_CARD_MIN_RECTANGULARITY = 0.45
+# 候选区域、置信度、NMS 等检测阈值。调参时优先关注这些常量
+MAX_CANDIDATES = 14  # 普通轮廓兜底检测最多保留的候选框数量
+MAX_CARD_CANDIDATES = 6  # 卡片/包裹区域最多保留的候选裁剪图数量
+MAX_DETECTIONS = 1  # 最终最多显示的检测目标数量；比赛单目标场景设为 1
+PROPOSAL_CONF_THRESHOLD = 0.28  # 通用 YOLO proposal 模型的基础置信度阈值
+PROPOSAL_IOU_THRESHOLD = 0.45  # 通用 YOLO proposal 模型内部 NMS 的 IoU 阈值
+CONF_THRESHOLD = 0.78  # 分类模型默认置信度阈值
+MARGIN_THRESHOLD = 0.12  # top1 与 top2 分类分数最小差值，越大越保守
+NMS_IOU_THRESHOLD = 0.35  # 候选框去重的 IoU 阈值，低于该值才认为不是重复框
+DETECTION_INTERVAL = 2  # 每隔多少帧运行一次完整检测；中间帧使用追踪结果
+TRACK_MIN_HITS = 3  # 轨迹至少连续命中多少次后才显示，防止一帧误检
+TRACK_MAX_MISSED = 8  # 轨迹最多允许连续丢失多少帧，超过后清除
+BOX_SMOOTHING = 0.90  # 检测框位置平滑系数；越接近 1，框移动越慢越稳
+CONFIDENCE_SMOOTHING = 0.82  # 置信度平滑系数；越接近 1，分数变化越慢
+MOTION_THRESHOLD = 18  # 帧差二值化阈值，用于生成运动区域掩码
+NEW_TRACK_MIN_MOTION = 0.006  # 非可信检测创建新轨迹所需的最小运动比例
+ENABLE_CONTOUR_FALLBACK = True  # 是否启用基于轮廓的候选区域兜底方案
+FALLBACK_CONF_THRESHOLD = 0.90  # 兜底分类结果需要达到的最低置信度
+FALLBACK_MIN_MOTION = 0.015  # 兜底分类结果需要达到的最小运动比例
+FACE_OVERLAP_THRESHOLD = 0.12  # 候选框与人脸区域重叠超过该比例时过滤
+CARD_CONF_THRESHOLD = 0.78  # 卡片裁剪图分类的最低置信度
+TRACK_VISIBLE_CONFIDENCE_RATIO = 0.90  # 追踪显示阈值相对类别阈值的比例
+SINGLE_TARGET_MODE = True  # 是否启用单目标模式；True 时只维护一个主目标
+LABEL_SWITCH_HITS = 3  # 标签连续变化多少次后才真正切换轨迹标签
 
+# 单目标追踪参数：用于抑制框突然跳动、短暂丢帧和标签抖动
+PRIMARY_JUMP_IOU = 0.06  # 主目标新旧框 IoU 低于该值时，可能被判定为跳变
+PRIMARY_JUMP_CENTER_RATIO = 0.55  # 主目标中心距离超过该比例时，可能被判定为跳变
+PRIMARY_CONF_DECAY = 0.97  # 主目标丢帧时置信度每帧衰减系数
+TERMINAL_REPEAT_INTERVAL = 5.0  # 终端相同识别结果的重复打印间隔，单位秒
+
+# 卡片/包裹区域检测参数：先找疑似卡片，再对卡片裁剪图做分类
+REQUIRE_CARD_FOR_DETECTION = True  # 是否必须先检测到卡片/包裹区域才允许输出结果
+CARD_MISSING_CLEAR_FRAMES = 2  # 连续多少个检测周期找不到卡片后清空已有轨迹
+DEBUG_PRINT_INTERVAL = 1.0  # 调试输出间隔，单位秒；当前逻辑预留该参数
+CARD_MIN_BRIGHT_RATIO = 0.46  # 卡片内部亮色像素最低比例，用于过滤暗色区域
+CARD_MIN_EDGE_DENSITY = 0.002  # 卡片内部最低边缘密度，太低可能是空白背景
+CARD_MAX_EDGE_DENSITY = 0.18  # 卡片内部最高边缘密度，太高可能是杂乱背景
+CARD_MIN_DARK_RATIO = 0.001  # 卡片内部暗色内容最低比例，用于确认有图案/文字
+CARD_MAX_DARK_RATIO = 0.55  # 卡片内部暗色内容最高比例，过高可能不是白色卡片
+CARD_MIN_RECTANGULARITY = 0.62  # 亮色候选轮廓的最低矩形度
+ENABLE_ORIENTATION_TTA = True  # 是否对裁剪图进行旋转测试增强，提升方向鲁棒性
+ORIENTATION_TTA_MARGIN_WEIGHT = 0.25  # 旋转增强结果排序时，分类边际分数的权重
+CARD_MIN_BORDER_SIDES = 3  # 至少多少条边需要有明显边框特征
+CARD_BORDER_STRIP_RATIO = 0.06  # 检查边框时，四边取样条带占边长的比例
+CARD_BORDER_DARK_THRESHOLD = 0.025  # 单侧边框暗色像素比例阈值
+CARD_BORDER_EDGE_THRESHOLD = 0.020  # 单侧边框边缘密度阈值
+CARD_MIN_BORDER_SCORE = 1.20  # 卡片边框综合评分最低要求
+EDGE_CARD_MIN_AREA_RATIO = 0.05  # 边缘卡片候选占整帧面积的最小比例
+EDGE_CARD_MAX_AREA_RATIO = 0.75  # 边缘卡片候选占整帧面积的最大比例
+EDGE_CARD_MIN_SIDE = 120  # 边缘卡片候选最短边最小像素长度
+EDGE_CARD_MAX_ASPECT = 1.45  # 边缘卡片候选最大长宽比，越小越接近正方形
+EDGE_CARD_MIN_RECTANGULARITY = 0.45  # 边缘卡片候选最低矩形度
+
+# 本项目训练集支持的目标标签
 TARGET_LABELS = {
     "air_conditioner",
     "apple_fruit",
@@ -79,6 +88,7 @@ TARGET_LABELS = {
     "toothbrush",
 }
 
+# 将 COCO 通用检测类别映射到本项目的分类标签
 COCO_TO_TARGET = {
     "apple": "apple_fruit",
     "banana": "banana_fruit",
@@ -88,25 +98,28 @@ COCO_TO_TARGET = {
     "tv": "television_set",
 }
 
+# 通用检测模型各类别的独立阈值，避免大家电等类别过度触发
 PROPOSAL_CLASS_THRESHOLDS = {
-    "apple": 0.35,
-    "banana": 0.35,
-    "orange": 0.35,
-    "refrigerator": 0.65,
-    "toothbrush": 0.35,
-    "tv": 0.55,
+    "apple": 0.35,  # 通用模型检测苹果的最低置信度
+    "banana": 0.35,  # 通用模型检测香蕉的最低置信度
+    "orange": 0.35,  # 通用模型检测橙子的最低置信度
+    "refrigerator": 0.65,  # 通用模型检测冰箱的最低置信度；设高一些减少误检
+    "toothbrush": 0.35,  # 通用模型检测牙刷的最低置信度
+    "tv": 0.55,  # 通用模型检测电视机的最低置信度
 }
 
-FALLBACK_ONLY_LABELS = TARGET_LABELS
+FALLBACK_ONLY_LABELS = TARGET_LABELS  # 兜底分类流程允许识别的标签集合
 
+# 分类模型各类别的额外阈值；容易误检的类别可以设得更高
 CLASS_CONF_THRESHOLDS = {
-    "air_conditioner": 0.78,
-    "clothes": 0.78,
-    "refrigerator_appliance": 0.84,
-    "television_set": 0.84,
-    "tissue_paper": 0.82,
+    "air_conditioner": 0.78,  # 空调分类最低置信度
+    "clothes": 0.78,  # 衣服分类最低置信度
+    "refrigerator_appliance": 0.84,  # 冰箱分类最低置信度；较易混淆时提高
+    "television_set": 0.84,  # 电视机分类最低置信度；较易混淆时提高
+    "tissue_paper": 0.82,  # 卫生纸分类最低置信度
 }
 
+# OpenCV 窗口中绘制的英文名称
 DISPLAY_NAMES = {
     "toothbrush": "Toothbrush",
     "tissue_paper": "Tissue Paper",
@@ -119,18 +132,21 @@ DISPLAY_NAMES = {
     "air_conditioner": "Air Conditioner",
 }
 
+# 终端输出使用的类别名称
 CATEGORY_NAMES = {
     "daily_items": "Daily Items",
     "fruits": "Fruits",
     "home_appliances": "Home Appliances",
 }
 
+# 终端输出使用的中文类别名称
 CATEGORY_NAMES_CN = {
     "daily_items": "日用品",
     "fruits": "水果",
     "home_appliances": "家电",
 }
 
+# 物品到大类的映射，用于输出“属于哪一类”
 ITEM_CATEGORIES = {
     "toothbrush": "daily_items",
     "tissue_paper": "daily_items",
@@ -143,6 +159,7 @@ ITEM_CATEGORIES = {
     "air_conditioner": "home_appliances",
 }
 
+# 终端输出使用的中文物品名称
 ITEM_NAMES_CN = {
     "toothbrush": "牙刷",
     "tissue_paper": "卫生纸",
@@ -155,6 +172,7 @@ ITEM_NAMES_CN = {
     "air_conditioner": "空调",
 }
 
+# 不同物品在画面中的框线颜色，OpenCV 使用 BGR 顺序
 BOX_COLORS = {
     "toothbrush": (255, 170, 0),
     "tissue_paper": (0, 255, 255),
@@ -170,6 +188,7 @@ BOX_COLORS = {
 
 @dataclass
 class Detection:
+    # 单帧检测结果，box 坐标格式为 (x1, y1, x2, y2)
     label: str
     confidence: float
     box: tuple[int, int, int, int]
@@ -180,6 +199,7 @@ class Detection:
 
 @dataclass
 class Track:
+    # 跨帧追踪状态，用于平滑框位置并减少识别结果闪烁
     label: str
     confidence: float
     box: tuple[int, int, int, int]
@@ -190,6 +210,7 @@ class Track:
 
 
 def load_face_detectors() -> list[cv2.CascadeClassifier]:
+    # 加载 OpenCV 自带的人脸检测器，后续用来排除人脸区域
     cascade_names = [
         "haarcascade_frontalface_default.xml",
         "haarcascade_frontalface_alt2.xml",
@@ -204,6 +225,7 @@ def load_face_detectors() -> list[cv2.CascadeClassifier]:
 
 
 def resize_for_display(frame: np.ndarray, width: int) -> np.ndarray:
+    # 保持宽高比缩放画面，避免窗口过大影响显示和处理速度
     height, current_width = frame.shape[:2]
     if current_width <= width:
         return frame
@@ -212,6 +234,7 @@ def resize_for_display(frame: np.ndarray, width: int) -> np.ndarray:
 
 
 def expand_box(box: tuple[int, int, int, int], shape: tuple[int, int], ratio: float = 0.12) -> tuple[int, int, int, int]:
+    # 适当扩大候选框，给分类模型保留物体边缘上下文
     x, y, w, h = box
     frame_h, frame_w = shape
     pad_x = int(w * ratio)
@@ -229,6 +252,7 @@ def box_area(box: tuple[int, int, int, int]) -> int:
 
 
 def box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    # 计算两个框的 IoU，用于 NMS 和追踪匹配
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
     inter_x1 = max(ax1, bx1)
@@ -246,6 +270,7 @@ def box_center(box: tuple[int, int, int, int]) -> tuple[float, float]:
 
 
 def center_distance_ratio(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    # 用框对角线归一化中心点距离，便于判断目标是否突然跳动
     ax, ay = box_center(a)
     bx, by = box_center(b)
     distance = float(np.hypot(ax - bx, ay - by))
@@ -260,6 +285,7 @@ def center_distance_ratio(a: tuple[int, int, int, int], b: tuple[int, int, int, 
 
 
 def overlap_ratio(inner: tuple[int, int, int, int], outer: tuple[int, int, int, int]) -> float:
+    # 计算 inner 有多少比例落在 outer 内，用于过滤人脸重叠区域
     ix1, iy1, ix2, iy2 = inner
     ox1, oy1, ox2, oy2 = outer
     inter_x1 = max(ix1, ox1)
@@ -275,6 +301,7 @@ def detect_faces(
     frame: np.ndarray,
     detectors: list[cv2.CascadeClassifier],
 ) -> list[tuple[int, int, int, int]]:
+    # 多个人脸检测器的结果合并后做一次 NMS，减少重复人脸框
     if not detectors:
         return []
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -286,6 +313,7 @@ def detect_faces(
 
 
 def overlaps_face(box: tuple[int, int, int, int], face_boxes: list[tuple[int, int, int, int]]) -> bool:
+    # 只要目标框和任一人脸框明显重叠，就认为该候选不可靠
     return any(
         overlap_ratio(face_box, box) > FACE_OVERLAP_THRESHOLD
         or overlap_ratio(box, face_box) > FACE_OVERLAP_THRESHOLD
@@ -294,6 +322,7 @@ def overlaps_face(box: tuple[int, int, int, int], face_boxes: list[tuple[int, in
 
 
 def nms_boxes(boxes: list[tuple[int, int, int, int]], threshold: float) -> list[tuple[int, int, int, int]]:
+    # 非极大值抑制：保留面积更大的框，去掉高度重叠的重复框
     kept: list[tuple[int, int, int, int]] = []
     for box in sorted(boxes, key=box_area, reverse=True):
         if all(box_iou(box, old_box) < threshold for old_box in kept):
@@ -302,6 +331,7 @@ def nms_boxes(boxes: list[tuple[int, int, int, int]], threshold: float) -> list[
 
 
 def order_points(points: np.ndarray) -> np.ndarray:
+    # 将四个点固定排序为左上、右上、右下、左下，便于透视矫正
     points = points.astype(np.float32)
     ordered = np.zeros((4, 2), dtype=np.float32)
     point_sum = points.sum(axis=1)
@@ -314,6 +344,7 @@ def order_points(points: np.ndarray) -> np.ndarray:
 
 
 def warp_card(frame: np.ndarray, points: np.ndarray, size: int = 320) -> np.ndarray:
+    # 把倾斜的卡片区域拉正为正方形裁剪图，再送入分类模型
     source = order_points(points)
     destination = np.array(
         [[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]],
@@ -331,6 +362,7 @@ def warp_card(frame: np.ndarray, points: np.ndarray, size: int = 320) -> np.ndar
 
 
 def card_crop_score(crop: np.ndarray) -> float:
+    # 根据亮度、暗色内容和边缘密度评估裁剪图是否像一张有效卡片
     height, width = crop.shape[:2]
     inset_x = max(2, int(width * 0.06))
     inset_y = max(2, int(height * 0.06))
@@ -357,6 +389,7 @@ def card_crop_score(crop: np.ndarray) -> float:
 
 
 def card_border_score(crop: np.ndarray) -> float:
+    # 检查卡片四边是否有足够的边缘/暗色信息，过滤纯白背景误检
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape[:2]
     strip = max(6, int(min(height, width) * CARD_BORDER_STRIP_RATIO))
@@ -389,6 +422,7 @@ def edge_card_candidates(
     frame: np.ndarray,
     face_boxes: list[tuple[int, int, int, int]] | None = None,
 ) -> list[tuple[float, tuple[int, int, int, int], np.ndarray]]:
+    # 从边缘轮廓中寻找卡片候选，适合卡片颜色不够亮但边框清楚的场景
     height, width = frame.shape[:2]
     frame_area = height * width
 
@@ -401,6 +435,7 @@ def edge_card_candidates(
     candidates: list[tuple[float, tuple[int, int, int, int], np.ndarray]] = []
 
     for contour in contours:
+        # 面积、边长、长宽比和矩形度共同过滤掉细碎边缘和非卡片物体
         contour_area = cv2.contourArea(contour)
         area_ratio = contour_area / frame_area
         if area_ratio < EDGE_CARD_MIN_AREA_RATIO or area_ratio > EDGE_CARD_MAX_AREA_RATIO:
@@ -448,6 +483,7 @@ def card_candidate_crops(
     frame: np.ndarray,
     face_boxes: list[tuple[int, int, int, int]] | None = None,
 ) -> list[tuple[tuple[int, int, int, int], np.ndarray]]:
+    # 先用“亮且低饱和”的颜色特征找白色卡片，再融合边缘候选
     height, width = frame.shape[:2]
     frame_area = height * width
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -464,6 +500,7 @@ def card_candidate_crops(
     candidates: list[tuple[float, tuple[int, int, int, int], np.ndarray]] = []
 
     for contour in contours:
+        # 逐个轮廓评估是否像卡片，并把通过的区域透视矫正为裁剪图
         contour_area = cv2.contourArea(contour)
         if contour_area < frame_area * 0.018 or contour_area > frame_area * 0.70:
             continue
@@ -499,6 +536,7 @@ def card_candidate_crops(
     candidates.sort(key=lambda item: item[0], reverse=True)
     kept: list[tuple[tuple[int, int, int, int], np.ndarray]] = []
     for _, box, crop in candidates:
+        # 对卡片候选做 NMS，只保留最可靠的几个裁剪图
         if all(box_iou(box, old_box) < NMS_IOU_THRESHOLD for old_box, _ in kept):
             kept.append((box, crop))
         if len(kept) >= MAX_CARD_CANDIDATES:
@@ -507,6 +545,7 @@ def card_candidate_crops(
 
 
 def candidate_boxes(frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+    # 兜底候选框生成：当不要求卡片时，基于边缘轮廓找可能的物体区域
     height, width = frame.shape[:2]
     frame_area = height * width
 
@@ -540,6 +579,7 @@ def candidate_boxes(frame: np.ndarray) -> list[tuple[int, int, int, int]]:
     boxes = sorted(boxes, key=box_area, reverse=True)[:MAX_CANDIDATES]
 
     if not boxes:
+        # 完全找不到轮廓时，用画面中央区域作为保底候选，避免流程空转
         side = int(min(height, width) * 0.58)
         x1 = (width - side) // 2
         y1 = (height - side) // 2
@@ -552,6 +592,7 @@ def build_motion_mask(
     frame: np.ndarray,
     previous_gray: np.ndarray | None,
 ) -> tuple[np.ndarray | None, np.ndarray]:
+    # 用相邻帧差分生成运动掩码，帮助过滤静止背景中的误检
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     if previous_gray is None or previous_gray.shape != gray.shape:
@@ -566,6 +607,7 @@ def build_motion_mask(
 
 
 def motion_score(mask: np.ndarray | None, box: tuple[int, int, int, int]) -> float:
+    # 统计候选框内运动像素比例，返回值越高说明区域越可能是新出现目标
     if mask is None:
         return 0.0
     x1, y1, x2, y2 = box
@@ -581,6 +623,7 @@ def proposal_detections(
     motion_mask: np.ndarray | None,
     face_boxes: list[tuple[int, int, int, int]],
 ) -> list[Detection]:
+    # 使用通用 YOLO 模型先定位 COCO 类别，再映射到本项目标签
     result = proposal_model.predict(
         frame,
         conf=PROPOSAL_CONF_THRESHOLD,
@@ -594,6 +637,7 @@ def proposal_detections(
     height, width = frame.shape[:2]
 
     for raw_box in result.boxes:
+        # 只保留能映射到目标类别且置信度达标的通用检测结果
         coco_name = result.names[int(raw_box.cls[0])]
         label = COCO_TO_TARGET.get(coco_name)
         if label is None:
@@ -628,6 +672,7 @@ def proposal_detections(
 
 
 def orientation_variants(crop: np.ndarray) -> list[np.ndarray]:
+    # 测试时增强：同一张裁剪图旋转四个方向，取最可信的分类结果
     if not ENABLE_ORIENTATION_TTA:
         return [crop]
     return [
@@ -648,6 +693,7 @@ def classify_candidate_crops(
     min_motion: float = 0.0,
     trusted: bool = False,
 ) -> list[Detection]:
+    # 对候选裁剪图批量分类，并按置信度、边际分数、运动和人脸重叠过滤
     valid = [(box, crop) for box, crop in candidates if crop.size]
     if not valid:
         return []
@@ -655,6 +701,7 @@ def classify_candidate_crops(
     variant_images: list[np.ndarray] = []
     variant_candidate_indices: list[int] = []
     for candidate_index, (_, crop) in enumerate(valid):
+        # 记录旋转图对应的原始候选索引，方便后面按候选聚合最佳结果
         for variant in orientation_variants(crop):
             variant_images.append(variant)
             variant_candidate_indices.append(candidate_index)
@@ -664,6 +711,7 @@ def classify_candidate_crops(
     detections: list[Detection] = []
 
     for candidate_index, result in zip(variant_candidate_indices, results):
+        # top1 置信度和 top1-top2 差值同时使用，降低“相似类别”误判
         scores = result.probs.data.detach().cpu()
         values, indices = scores.topk(2)
         confidence = float(values[0])
@@ -680,6 +728,7 @@ def classify_candidate_crops(
     for candidate_index, (label, confidence, margin) in best_by_candidate.items():
         box, _ = valid[candidate_index]
 
+        # 类别专属阈值和调用方传入阈值取更严格者
         class_confidence = CLASS_CONF_THRESHOLDS.get(label, CONF_THRESHOLD)
         required_confidence = (
             max(min_confidence, class_confidence)
@@ -709,6 +758,7 @@ def classify_candidate_crops(
     detections.sort(key=lambda item: item.confidence, reverse=True)
     kept: list[Detection] = []
     for detection in detections:
+        # 对分类后的目标框再次去重，只输出数量上限内的最高分结果
         if all(box_iou(detection.box, old.box) < NMS_IOU_THRESHOLD for old in kept):
             kept.append(detection)
         if len(kept) >= MAX_DETECTIONS:
@@ -726,6 +776,7 @@ def classify_candidates(
     min_confidence: float | None = None,
     min_motion: float = 0.0,
 ) -> list[Detection]:
+    # 将普通框裁剪成图像候选，再复用统一的候选分类逻辑
     candidates = [
         (box, frame[y1:y2, x1:x2])
         for box in boxes
@@ -747,6 +798,7 @@ def smooth_box(
     previous: tuple[int, int, int, int] | None,
     smoothing: float = BOX_SMOOTHING,
 ) -> tuple[int, int, int, int]:
+    # 指数平滑框坐标，让显示框移动更稳定
     if previous is None:
         return current
     return tuple(
@@ -756,6 +808,7 @@ def smooth_box(
 
 
 def visible_confidence_threshold(label: str) -> float:
+    # 追踪中的可见阈值略低于新检测阈值，避免短暂波动造成框闪烁
     return max(
         CONF_THRESHOLD,
         CLASS_CONF_THRESHOLDS.get(label, CONF_THRESHOLD) * TRACK_VISIBLE_CONFIDENCE_RATIO,
@@ -763,6 +816,7 @@ def visible_confidence_threshold(label: str) -> float:
 
 
 def visible_tracks(tracks: dict[str, Track]) -> list[Detection]:
+    # 只显示命中次数、丢失帧数和置信度都满足条件的追踪目标
     detections = [
         Detection(track.label, track.confidence, track.box)
         for track in tracks.values()
@@ -774,6 +828,7 @@ def visible_tracks(tracks: dict[str, Track]) -> list[Detection]:
 
 
 def primary_detection_score(detection: Detection, track: Track | None) -> float:
+    # 单目标模式下的排序分数：偏向可信检测、大框和与当前轨迹更接近的目标
     score = detection.confidence
     if detection.trusted:
         score += 0.25
@@ -788,12 +843,14 @@ def primary_detection_score(detection: Detection, track: Track | None) -> float:
 
 
 def pick_primary_detection(detections: list[Detection], track: Track | None) -> Detection | None:
+    # 从当前帧候选中选出最适合作为主目标的检测
     if not detections:
         return None
     return max(detections, key=lambda detection: primary_detection_score(detection, track))
 
 
 def visible_primary_track(track: Track | None) -> list[Detection]:
+    # 将主目标轨迹转换成可绘制的检测结果；轨迹不稳定时不显示
     if track is None:
         return []
     if track.hits < TRACK_MIN_HITS or track.missed > TRACK_MAX_MISSED:
@@ -804,6 +861,7 @@ def visible_primary_track(track: Track | None) -> list[Detection]:
 
 
 def is_jump_detection(detection: Detection, track: Track | None) -> bool:
+    # 判断检测框是否离当前轨迹太远，防止目标突然跳到画面另一处
     if track is None or track.missed > TRACK_MAX_MISSED:
         return False
     if detection.trusted and detection.label == track.label and detection.confidence >= 0.985:
@@ -815,6 +873,7 @@ def is_jump_detection(detection: Detection, track: Track | None) -> bool:
 
 
 def should_snap_to_trusted_detection(detection: Detection, track: Track | None) -> bool:
+    # 对极高置信度的可信检测允许快速吸附，避免旧轨迹拖住新位置
     if track is None or not detection.trusted or detection.confidence < 0.985:
         return False
     return (
@@ -827,9 +886,11 @@ def update_primary_track(
     detections: list[Detection],
     track: Track | None,
 ) -> tuple[list[Detection], Track | None]:
+    # 单目标模式：每帧只维护一个主轨迹，适合比赛场景中一次识别一个包裹
     detection = pick_primary_detection(detections, track)
 
     if detection is None or is_jump_detection(detection, track):
+        # 当前帧没有可靠目标时，不立即清空；先让旧轨迹按置信度衰减几帧
         if track is None:
             return [], None
         track.missed += 1
@@ -842,6 +903,7 @@ def update_primary_track(
         return visible_primary_track(track), track
 
     if track is None or track.missed > TRACK_MAX_MISSED:
+        # 新建主轨迹；可信检测可直接满足最小命中次数，减少启动延迟
         initial_hits = TRACK_MIN_HITS if detection.trusted else 1
         track = Track(
             label=detection.label,
@@ -853,6 +915,7 @@ def update_primary_track(
 
     snap_to_detection = should_snap_to_trusted_detection(detection, track)
     had_missed = track.missed > 0
+    # 丢帧恢复时降低平滑系数，让框更快追上实际目标位置
     box_smoothing = 0.0 if snap_to_detection else (0.82 if had_missed else BOX_SMOOTHING)
     confidence_smoothing = 0.45 if had_missed else CONFIDENCE_SMOOTHING
 
@@ -868,6 +931,7 @@ def update_primary_track(
         track.candidate_label = ""
         track.candidate_hits = 0
     else:
+        # 标签变化需要连续命中多次才切换，避免一两帧误判导致输出抖动
         if detection.label == track.candidate_label:
             track.candidate_hits += 1
         else:
@@ -889,6 +953,7 @@ def update_tracks(
     detections: list[Detection],
     tracks: dict[str, Track],
 ) -> tuple[list[Detection], dict[str, Track]]:
+    # 多目标模式：按标签各保留一个最佳轨迹
     best_by_label: dict[str, Detection] = {}
     for detection in detections:
         old = best_by_label.get(detection.label)
@@ -896,12 +961,14 @@ def update_tracks(
             best_by_label[detection.label] = detection
 
     for track in tracks.values():
+        # 所有旧轨迹先衰减；本帧匹配到检测后再恢复
         track.missed += 1
         track.confidence *= 0.96
 
     for label, detection in best_by_label.items():
         track = tracks.get(label)
         if track is None:
+            # 非可信检测必须有足够运动，才允许创建新轨迹
             if not detection.trusted and detection.motion < NEW_TRACK_MIN_MOTION:
                 continue
             tracks[label] = Track(label=label, confidence=detection.confidence, box=detection.box)
@@ -921,10 +988,12 @@ def update_tracks(
         if track.missed <= TRACK_MAX_MISSED
         and track.confidence >= visible_confidence_threshold(label) * 0.82
     }
+    # 清理丢失太久或置信度过低的轨迹后，再返回可见目标
     return visible_tracks(tracks), tracks
 
 
 def draw_label(frame: np.ndarray, text: str, x: int, y: int, color: tuple[int, int, int]) -> None:
+    # 绘制带底色的标签，自动根据背景色选择黑字或白字
     font = cv2.FONT_HERSHEY_SIMPLEX
     scale = 0.72
     thickness = 2
@@ -939,6 +1008,7 @@ def draw_label(frame: np.ndarray, text: str, x: int, y: int, color: tuple[int, i
 
 
 def draw_detections(frame: np.ndarray, detections: list[Detection], fps: float) -> None:
+    # 在画面上绘制检测框、标签和 FPS
     for detection in detections:
         x1, y1, x2, y2 = detection.box
         color = BOX_COLORS.get(detection.label, (0, 255, 0))
@@ -950,6 +1020,7 @@ def draw_detections(frame: np.ndarray, detections: list[Detection], fps: float) 
 
 
 def detection_signature(detections: list[Detection]) -> tuple[str, ...]:
+    # 用标签集合表示当前输出结果，便于判断终端是否需要重复打印
     return tuple(sorted(detection.label for detection in detections))
 
 
@@ -959,6 +1030,7 @@ def should_print_detection(
     last_printed_at: float,
     now: float,
 ) -> bool:
+    # 结果变化时立即打印；结果不变时按固定间隔重复提醒
     if not current_signature:
         return False
     if current_signature != last_signature:
@@ -967,6 +1039,7 @@ def should_print_detection(
 
 
 def print_detection_results(detections: list[Detection]) -> None:
+    # 将识别结果转换成中文句子输出到终端
     if not detections:
         return
 
@@ -978,9 +1051,11 @@ def print_detection_results(detections: list[Detection]) -> None:
 
 
 def main() -> None:
+    # 启动前确认训练好的分类模型存在
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Model not found: {MODEL_PATH}. Run python train.py first.")
 
+    # 根据配置加载分类模型、可选通用检测模型、人脸检测器和摄像头
     model = YOLO(str(MODEL_PATH))
     proposal_model = None if REQUIRE_CARD_FOR_DETECTION else YOLO(str(PROPOSAL_MODEL_PATH))
     face_detectors = load_face_detectors()
@@ -1002,6 +1077,7 @@ def main() -> None:
 
     try:
         while True:
+            # 逐帧读取摄像头画面
             ok, frame = camera.read()
             if not ok:
                 print("Failed to read camera frame.")
@@ -1010,10 +1086,12 @@ def main() -> None:
             frame = resize_for_display(frame, DISPLAY_WIDTH)
             motion_mask, previous_gray = build_motion_mask(frame, previous_gray)
             if frame_index % DETECTION_INTERVAL == 0:
+                # 每隔若干帧运行一次完整检测，其余帧复用追踪结果以提高速度
                 face_boxes = detect_faces(frame, face_detectors)
                 detections: list[Detection] = []
 
                 if ENABLE_CONTOUR_FALLBACK:
+                    # 优先找卡片/包裹区域，再对裁剪图做分类
                     card_candidates = card_candidate_crops(frame, face_boxes=face_boxes)
                     card_detections = classify_candidate_crops(
                         model,
@@ -1031,11 +1109,13 @@ def main() -> None:
                 if not detections:
                     card_missing_frames += 1
                     if REQUIRE_CARD_FOR_DETECTION:
+                        # 强制要求卡片时，连续缺失会清空轨迹，避免旧结果一直停留
                         if card_missing_frames >= CARD_MISSING_CLEAR_FRAMES:
                             primary_track = None
                             tracks.clear()
                         detections = []
                     else:
+                        # 不强制卡片时，退回到通用检测模型和轮廓候选分类
                         detections = (
                             proposal_detections(proposal_model, frame, motion_mask, face_boxes)
                             if proposal_model is not None
@@ -1060,10 +1140,12 @@ def main() -> None:
                     card_missing_frames = 0
 
                 if SINGLE_TARGET_MODE:
+                    # 比赛模式默认只输出一个主目标
                     visible_detections, primary_track = update_primary_track(detections, primary_track)
                 else:
                     visible_detections, tracks = update_tracks(detections, tracks)
             else:
+                # 非完整检测帧只刷新已有轨迹，减少模型推理次数
                 visible_detections = (
                     visible_primary_track(primary_track)
                     if SINGLE_TARGET_MODE
@@ -1074,6 +1156,7 @@ def main() -> None:
             now = time.time()
             current_signature = detection_signature(visible_detections)
             if should_print_detection(current_signature, last_printed_signature, last_printed_at, now):
+                # 终端打印会限频，避免同一结果刷屏
                 print_detection_results(visible_detections)
                 last_printed_signature = current_signature
                 last_printed_at = now
@@ -1088,6 +1171,7 @@ def main() -> None:
             if key in (27, ord("q")):
                 break
     finally:
+        # 无论正常退出还是异常退出，都释放摄像头和窗口资源
         camera.release()
         cv2.destroyAllWindows()
 
