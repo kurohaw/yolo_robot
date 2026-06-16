@@ -80,6 +80,10 @@ CARD_CONTAINER_MIN_CHILDREN = 4
 CARD_CONTAINER_MAX_CHILD_AREA_RATIO = 0.35
 CARD_NESTED_MIN_PARENT_RATIO = 1.60
 CARD_NESTED_MAX_PARENT_RATIO = 8.00
+BANANA_VISUAL_AREA_RATIO = 0.14
+BANANA_VISUAL_MAX_EXTENT = 0.64
+BANANA_VISUAL_CONFIDENCE = 0.96
+BANANA_VISUAL_MARGIN = 0.35
 EDGE_CARD_MIN_AREA_RATIO = 0.002  # 边缘卡片候选占整帧面积的最小比例
 EDGE_CARD_MAX_AREA_RATIO = 0.30  # 过滤整张试题纸等超大矩形
 EDGE_CARD_MIN_SIDE = 36  # 20 cm 场景仍需保留的小卡片最短边
@@ -120,6 +124,7 @@ PROPOSAL_CLASS_THRESHOLDS = {
 }
 
 FALLBACK_ONLY_LABELS = TARGET_LABELS  # 兜底分类流程允许识别的标签集合
+FRUIT_LABELS = {"apple_fruit", "banana_fruit", "orange_fruit"}
 
 # 分类模型各类别的额外阈值；容易误检的类别可以设得更高
 CLASS_CONF_THRESHOLDS = {
@@ -751,6 +756,45 @@ def orientation_variants(crop: np.ndarray) -> list[np.ndarray]:
     ]
 
 
+def banana_visual_score(crop: np.ndarray) -> float:
+    # 香蕉在卡片中通常是大面积黄色、弯曲细长，填充率低于圆形橙子。
+    if crop.size == 0:
+        return 0.0
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    yellow_mask = np.where(
+        (hsv[:, :, 0] >= 14)
+        & (hsv[:, :, 0] <= 48)
+        & (hsv[:, :, 1] >= 45)
+        & (hsv[:, :, 2] >= 80),
+        255,
+        0,
+    ).astype(np.uint8)
+    yellow_mask = cv2.morphologyEx(
+        yellow_mask,
+        cv2.MORPH_OPEN,
+        np.ones((5, 5), np.uint8),
+        iterations=1,
+    )
+
+    contours, _ = cv2.findContours(yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    crop_area = float(crop.shape[0] * crop.shape[1])
+    best_score = 0.0
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area <= 0.0:
+            continue
+        x, y, w, h = cv2.boundingRect(contour)
+        extent = area / float(max(w * h, 1))
+        area_ratio = area / crop_area
+        if area_ratio < BANANA_VISUAL_AREA_RATIO or extent > BANANA_VISUAL_MAX_EXTENT:
+            continue
+        aspect = max(w, h) / float(max(min(w, h), 1))
+        score = area_ratio * min(aspect, 3.0) * (1.0 - extent * 0.35)
+        best_score = max(best_score, score)
+    return best_score
+
+
 def classify_candidate_crops(
     model: YOLO,
     candidates: list[tuple[tuple[int, int, int, int], np.ndarray]],
@@ -794,7 +838,11 @@ def classify_candidate_crops(
             best_by_candidate[candidate_index] = (label, confidence, margin)
 
     for candidate_index, (label, confidence, margin) in best_by_candidate.items():
-        box, _ = valid[candidate_index]
+        box, crop = valid[candidate_index]
+        if label in FRUIT_LABELS and banana_visual_score(crop) > 0.0:
+            label = "banana_fruit"
+            confidence = max(confidence, BANANA_VISUAL_CONFIDENCE)
+            margin = max(margin, BANANA_VISUAL_MARGIN)
 
         # 类别专属阈值和调用方传入阈值取更严格者
         class_confidence = CLASS_CONF_THRESHOLDS.get(label, CONF_THRESHOLD)
