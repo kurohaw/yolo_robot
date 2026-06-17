@@ -6,3 +6,4 @@ __pycache__/
 datasets/
 runs/classify/*_retrain*/
 runs/classify/*_synth*/
+runs/classify/target_item_classes_*/

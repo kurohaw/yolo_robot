@@ -27,6 +27,7 @@ ROW_MAJOR_LABELS = (
     "refrigerator_appliance",
 )
 FRUIT_LABELS = {"apple_fruit", "banana_fruit", "orange_fruit"}
+FRUIT_CONFUSION_LABELS = {"banana_fruit", "orange_fruit"}
 APPLIANCE_CONFUSION_LABELS = {"air_conditioner", "refrigerator_appliance"}
 
 
@@ -36,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=ROOT / "datasets" / "target_item_classes")
     parser.add_argument("--train-count", type=int, default=180, help="Images per non-fruit class.")
     parser.add_argument("--val-count", type=int, default=45, help="Validation images per non-fruit class.")
-    parser.add_argument("--fruit-multiplier", type=int, default=2, help="Extra samples for apple/banana/orange.")
+    parser.add_argument("--fruit-multiplier", type=int, default=3, help="Extra samples for apple/banana/orange.")
     parser.add_argument("--appliance-multiplier", type=int, default=2, help="Extra samples for air-conditioner/refrigerator.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--clean", action="store_true", help="Delete the output dataset before generating.")
@@ -118,6 +119,29 @@ def random_color(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return cv2.convertScaleAbs(image, alpha=float(rng.uniform(0.88, 1.15)), beta=int(rng.integers(-12, 13)))
 
 
+def random_fruit_confusion_color(image: np.ndarray, rng: np.random.Generator, label: str) -> np.ndarray:
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV).astype(np.float32)
+    mask = (hsv[:, :, 1] > 35) & (hsv[:, :, 2] > 55)
+
+    if label == "orange_fruit":
+        hue_shift = float(rng.uniform(5.0, 15.0))
+        saturation_scale = float(rng.uniform(0.82, 1.16))
+        value_scale = float(rng.uniform(0.86, 1.15))
+    elif label == "banana_fruit":
+        hue_shift = float(rng.uniform(-13.0, -3.0))
+        saturation_scale = float(rng.uniform(0.90, 1.28))
+        value_scale = float(rng.uniform(0.78, 1.08))
+    else:
+        hue_shift = float(rng.uniform(-3.0, 4.0))
+        saturation_scale = float(rng.uniform(0.82, 1.18))
+        value_scale = float(rng.uniform(0.82, 1.12))
+
+    hsv[:, :, 0][mask] = (hsv[:, :, 0][mask] + hue_shift) % 180.0
+    hsv[:, :, 1][mask] = np.clip(hsv[:, :, 1][mask] * saturation_scale, 0, 255)
+    hsv[:, :, 2][mask] = np.clip(hsv[:, :, 2][mask] * value_scale, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
 def random_shadow(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     if rng.random() > 0.55:
         return image
@@ -146,10 +170,16 @@ def random_low_contrast(image: np.ndarray, rng: np.random.Generator) -> np.ndarr
     return cv2.convertScaleAbs(image, alpha=float(rng.uniform(0.82, 1.05)), beta=int(rng.integers(-10, 11)))
 
 
-def random_resolution_loss(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    if rng.random() > 0.75:
+def random_resolution_loss(
+    image: np.ndarray,
+    rng: np.random.Generator,
+    probability: float = 0.25,
+    min_side: int = 72,
+    max_side: int = 145,
+) -> np.ndarray:
+    if rng.random() > probability:
         return image
-    side = int(rng.integers(72, 145))
+    side = int(rng.integers(min_side, max_side))
     small = cv2.resize(image, (side, side), interpolation=cv2.INTER_AREA)
     interpolation = cv2.INTER_LINEAR if rng.random() < 0.65 else cv2.INTER_NEAREST
     return cv2.resize(small, image.shape[:2][::-1], interpolation=interpolation)
@@ -168,6 +198,26 @@ def random_edge_crop(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
 
 
+def random_fruit_confusion(image: np.ndarray, rng: np.random.Generator, label: str, split: str) -> np.ndarray:
+    if label not in FRUIT_LABELS:
+        return image
+
+    if label in FRUIT_CONFUSION_LABELS and (split == "train" or rng.random() < 0.45):
+        # Stress orange-vs-banana cases: camera white balance often makes orange look yellow
+        # and makes banana warmer/darker at 20 cm.
+        image = random_fruit_confusion_color(image, rng, label)
+        if rng.random() < (0.65 if split == "train" else 0.30):
+            image = random_resolution_loss(image, rng, probability=0.90, min_side=64, max_side=132)
+        if rng.random() < (0.38 if split == "train" else 0.20):
+            image = cv2.GaussianBlur(image, (5, 5), 0)
+        if rng.random() < (0.22 if split == "train" else 0.10):
+            image = random_edge_crop(image, rng)
+    elif split == "train":
+        image = random_color(image, rng)
+
+    return image
+
+
 def augment(image: np.ndarray, rng: np.random.Generator, label: str, split: str) -> np.ndarray:
     augmented = image.copy()
     strength = 0.035 if split == "train" else 0.025
@@ -182,6 +232,8 @@ def augment(image: np.ndarray, rng: np.random.Generator, label: str, split: str)
         augmented = random_color(augmented, rng)
         if rng.random() < 0.25:
             augmented = cv2.GaussianBlur(augmented, (5, 5), 0)
+
+    augmented = random_fruit_confusion(augmented, rng, label, split)
 
     if label in APPLIANCE_CONFUSION_LABELS:
         # Air-conditioner and refrigerator are both pale appliances; stress thin lines and low contrast.
