@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .idea/
 .DS_Store
+datasets/
+runs/classify/*_retrain*/
+runs/classify/*_synth*/
