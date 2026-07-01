@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 import time
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
 
 
@@ -16,6 +18,17 @@ from ultralytics import YOLO
 MODEL_PATH = Path("runs/classify/target_item_classes/weights/best.pt")  # 项目训练好的分类模型权重路径
 PROPOSAL_MODEL_PATH = Path("yolov8n.pt")  # 通用 YOLO 检测模型路径，仅在不强制卡片检测时使用
 WINDOW_NAME = "YOLO 9 Item Detection"  # OpenCV 显示窗口标题
+CHINESE_FONT_SIZE = 24  # 画面中文标签字号
+
+# 中文字体候选路径。Windows 本机优先，Ubuntu/Raspberry Pi 可安装 Noto CJK 或文泉驿字体。
+CHINESE_FONT_PATHS = [
+    Path("C:/Windows/Fonts/msyh.ttc"),
+    Path("C:/Windows/Fonts/simhei.ttf"),
+    Path("C:/Windows/Fonts/simsun.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+]
 
 # 摄像头与显示配置
 CAMERA_INDEX = 0  # 摄像头编号；如果打不开摄像头，可改为 1、2 等其他设备号
@@ -129,26 +142,6 @@ CLASS_CONF_THRESHOLDS = {
     "refrigerator_appliance": 0.84,  # 冰箱分类最低置信度；较易混淆时提高
     "television_set": 0.84,  # 电视机分类最低置信度；较易混淆时提高
     "tissue_paper": 0.82,  # 卫生纸分类最低置信度
-}
-
-# OpenCV 窗口中绘制的英文名称
-DISPLAY_NAMES = {
-    "toothbrush": "Toothbrush",
-    "tissue_paper": "Tissue Paper",
-    "clothes": "Clothes",
-    "banana_fruit": "Banana",
-    "apple_fruit": "Apple",
-    "orange_fruit": "Orange",
-    "television_set": "Television",
-    "refrigerator_appliance": "Refrigerator",
-    "air_conditioner": "Air Conditioner",
-}
-
-# 终端输出使用的类别名称
-CATEGORY_NAMES = {
-    "daily_items": "Daily Items",
-    "fruits": "Fruits",
-    "home_appliances": "Home Appliances",
 }
 
 # 终端输出使用的中文类别名称
@@ -1066,18 +1059,59 @@ def update_tracks(
 
 
 def draw_label(frame: np.ndarray, text: str, x: int, y: int, color: tuple[int, int, int]) -> None:
-    # 绘制带底色的标签，自动根据背景色选择黑字或白字
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.72
-    thickness = 2
-    (text_w, text_h), baseline = cv2.getTextSize(text, font, scale, thickness)
-    y = max(text_h + baseline + 4, y)
+    # PIL 负责绘制中文，OpenCV 默认字体无法稳定显示中文字符。
+    font = load_chinese_font()
+    text_bbox = measure_text(text, font)
+    text_w = text_bbox[2] - text_bbox[0]
+    text_h = text_bbox[3] - text_bbox[1]
+    padding_x = 8
+    padding_y = 5
+    label_w = text_w + padding_x * 2
+    label_h = text_h + padding_y * 2
+    x = max(0, min(x, frame.shape[1] - label_w - 1))
+    y = max(label_h + 2, min(y, frame.shape[0] - 2))
     brightness = 0.114 * color[0] + 0.587 * color[1] + 0.299 * color[2]
     text_color = (0, 0, 0) if brightness > 155 else (255, 255, 255)
 
-    cv2.rectangle(frame, (x - 2, y - text_h - baseline - 8), (x + text_w + 10, y + 6), (0, 0, 0), -1)
-    cv2.rectangle(frame, (x, y - text_h - baseline - 6), (x + text_w + 8, y + 4), color, -1)
-    cv2.putText(frame, text, (x + 4, y - baseline), font, scale, text_color, thickness, cv2.LINE_AA)
+    background_top = y - label_h
+    background_bottom = y
+    cv2.rectangle(frame, (x - 2, background_top - 2), (x + label_w + 2, background_bottom + 2), (0, 0, 0), -1)
+    cv2.rectangle(frame, (x, background_top), (x + label_w, background_bottom), color, -1)
+
+    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(image)
+    draw.text(
+        (x + padding_x, background_top + padding_y - text_bbox[1]),
+        text,
+        font=font,
+        fill=bgr_to_rgb(text_color),
+    )
+    frame[:] = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+
+
+@lru_cache(maxsize=1)
+def load_chinese_font() -> ImageFont.ImageFont:
+    for font_path in CHINESE_FONT_PATHS:
+        if font_path.exists():
+            return ImageFont.truetype(str(font_path), CHINESE_FONT_SIZE)
+    return ImageFont.load_default()
+
+
+def measure_text(text: str, font: ImageFont.ImageFont) -> tuple[int, int, int, int]:
+    image = Image.new("RGB", (1, 1))
+    draw = ImageDraw.Draw(image)
+    return draw.textbbox((0, 0), text, font=font)
+
+
+def bgr_to_rgb(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    return color[2], color[1], color[0]
+
+
+def detection_display_text(detection: Detection) -> str:
+    item_name = ITEM_NAMES_CN.get(detection.label, detection.label)
+    category_key = ITEM_CATEGORIES.get(detection.label, "unknown")
+    category_name = CATEGORY_NAMES_CN.get(category_key, "未知类别")
+    return f"类别：{category_name}  物品：{item_name}  {detection.confidence:.2f}"
 
 
 def draw_detections(frame: np.ndarray, detections: list[Detection], fps: float) -> None:
@@ -1085,9 +1119,8 @@ def draw_detections(frame: np.ndarray, detections: list[Detection], fps: float) 
     for detection in detections:
         x1, y1, x2, y2 = detection.box
         color = BOX_COLORS.get(detection.label, (0, 255, 0))
-        label = DISPLAY_NAMES.get(detection.label, detection.label)
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        draw_label(frame, f"{label} {detection.confidence:.2f}", x1, y1 - 6, color)
+        draw_label(frame, detection_display_text(detection), x1, y1 - 6, color)
 
     cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 0, 0), 2)
 
